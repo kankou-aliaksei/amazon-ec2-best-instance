@@ -1,6 +1,7 @@
 # Amazon EC2 Best Instance (amazon-ec2-best-instance)
 
 Amazon EC2 Best Instance (amazon-ec2-best-instance) allows you to choose the most optimal and cheap EC2 instance type for your use.
+
 # Prerequisites
 * python3
 * pip3
