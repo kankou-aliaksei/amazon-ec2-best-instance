@@ -40,12 +40,14 @@ class Ec2BestInstance:
         product_descriptions = options.get('operation_systems', ['Linux/UNIX'])
         is_current_generation = None
         is_best_price = options.get('is_best_price', False)
+        is_instance_storage_supported = options.get('is_instance_storage_supported')
 
         if options.get('is_current_generation'):
             is_current_generation = 'true' if options['is_current_generation'] == True else 'false'
 
         instances = self.__describe_instance_types({
-            'is_current_generation': is_current_generation
+            'is_current_generation': is_current_generation,
+            'is_instance_storage_supported': is_instance_storage_supported
         })
 
         filtered_instances = self.__filter_ec2_instances(instances, {
@@ -70,33 +72,62 @@ class Ec2BestInstance:
 
         return list(map(lambda ec2_instance: ec2_instance['InstanceType'], filtered_instances))
 
+    def is_instance_storage_supported_for_instance_type(self, instance_type):
+        response = self.__ec2_client.describe_instance_types(
+            InstanceTypes=[instance_type]
+        )
+        instance_types = response['InstanceTypes']
+        if len(instance_types) == 0:
+            raise Exception(f'The {instance_type} instance type not found')
+        instance_type_description = instance_types[0]
+        is_instance_storage_supported = instance_type_description['InstanceStorageSupported']
+        return is_instance_storage_supported
+
     def __describe_instance_types(self, options=None):
         is_current_generation = None
+        is_instance_storage_supported = None
 
         if options is not None:
-            if options.get('is_current_generation') is not None:
-                is_current_generation = options['is_current_generation']
+            is_current_generation = options.get('is_current_generation')
+            is_instance_storage_supported = options.get('is_instance_storage_supported')
 
         instances = []
 
-        response = self.__describe_instance_types_page(is_current_generation=is_current_generation)
+        response = self.__describe_instance_types_page(
+            is_current_generation=is_current_generation,
+            is_instance_storage_supported=is_instance_storage_supported
+        )
 
         instances += response['InstanceTypes']
 
         next_token = response.get('NextToken')
 
         while next_token is not None:
-            response = self.__describe_instance_types_page(next_token, is_current_generation)
+            response = self.__describe_instance_types_page(next_token, is_current_generation,
+                                                           is_instance_storage_supported)
             instances += response['InstanceTypes']
             next_token = response.get('NextToken')
 
         return instances
 
-    def __describe_instance_types_page(self, next_token=None, is_current_generation=None):
+    def __describe_instance_types_page(self, next_token=None, is_current_generation=None,
+                                       is_instance_storage_supported=None):
         filters = [] if is_current_generation is None else [{
             'Name': 'current-generation',
             'Values': [is_current_generation]
         }]
+
+        if is_instance_storage_supported is not None:
+            if is_instance_storage_supported:
+                filters.append({
+                    'Name': 'instance-storage-supported',
+                    'Values': ['true']
+                })
+            else:
+                filters.append({
+                    'Name': 'instance-storage-supported',
+                    'Values': ['false']
+                })
 
         if next_token is not None:
             response = self.__ec2_client.describe_instance_types(
