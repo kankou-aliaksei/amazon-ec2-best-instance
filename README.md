@@ -14,14 +14,15 @@ pip install amazon-ec2-best-instance
 
 # Options
 
-* **vcpu** Describes the vCPU configurations for the instance type.
-* **memory_gb** Describes the memory for the instance type in GiB.
-* **usage_class** Indicates whether the instance type is offered for spot or On-Demand.
-* **burstable** Indicates whether the instance type is a burstable performance instance type.
-* **architecture** The architectures supported by the instance type.
-* **operation_systems** The operating system that you will use on the virtual machine.
-* **is_current_generation** Use the latest generation or not.
-* **is_best_price** Indicate if you need to get an instance type with the best price.
+* **vcpu** Required. Describes the vCPU configurations for the instance type.
+* **memory_gb** Required. Describes the memory for the instance type in GiB.
+* **usage_class** Optional. Indicates whether the instance type is offered for spot or On-Demand.
+* **burstable** Optional. Indicates whether the instance type is a burstable performance instance type.
+* **architecture** Optional. The architectures supported by the instance type.
+* **operation_systems** Optional. The operating system that you will use on the virtual machine.
+* **is_current_generation** Optional. Use the latest generation or not.
+* **is_best_price** Optional. Indicate if you need to get an instance type with the best price.
+* **is_instance_storage_supported** Optional. Use instance types with instance store support
 
 # Usage
 
@@ -79,8 +80,10 @@ response = ec2_best_instance.get_best_instance_types({
     'is_current_generation': True,
     # Optional. If this parameter is set to True, the method will return the instance type with the best price.
     'is_best_price': True,
+    # Optional. If this parameter is set to True, the method will return the instance type with the instance storage.
+    'is_instance_storage_supported': True
 })
 
-print(response) # ['c5d.large']
+print(response)
 
 ```
