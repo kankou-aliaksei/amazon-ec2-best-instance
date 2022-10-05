@@ -3,6 +3,7 @@ import subprocess
 import json
 import logging
 from multiprocessing.pool import ThreadPool as Pool
+from .SpotUtils import SpotUtils
 
 
 class Ec2BestInstance:
@@ -24,6 +25,8 @@ class Ec2BestInstance:
         self.__logger = logger if logger is not None else logging.getLogger()
 
     def get_best_instance_types(self, options=None):
+        import logging
+        logging.getLogger("urllib3").setLevel(logging.ERROR)
         if options is None:
             raise Exception('Options are missing')
         if options.get('vcpu') is None:
@@ -41,6 +44,7 @@ class Ec2BestInstance:
         is_current_generation = None
         is_best_price = options.get('is_best_price', False)
         is_instance_storage_supported = options.get('is_instance_storage_supported')
+        max_interruption_frequency = options.get('max_interruption_frequency')
 
         if options.get('is_current_generation'):
             is_current_generation = 'true' if options['is_current_generation'] == True else 'false'
@@ -58,8 +62,41 @@ class Ec2BestInstance:
             'architecture': architecture
         })
 
-        self.__logger.info(f'Instance types number before filtering: {str(len(instances))}')
-        self.__logger.info(f'Instance types number after filtering: {str(len(filtered_instances))}')
+        self.__logger.debug(f'Instance types number before filtering: {str(len(instances))}')
+
+        if usage_class == 'spot' and max_interruption_frequency is not None:
+            spot_utils = SpotUtils(self.__region)
+            operation_systems = Ec2BestInstance.__get_operation_systems_by_product_descriptions(product_descriptions)
+
+            if len(operation_systems) > 1:
+                raise Exception('You must use Windows or Linux OS, not both')
+
+            interruption_frequencies = spot_utils.get_spot_interruption_frequency(operation_systems[0])
+
+            def interruption_frequency_statistic_existing_filter(ec2_instance):
+                instance_type = ec2_instance['InstanceType']
+                if interruption_frequencies.get(instance_type) is not None:
+                    return True
+                else:
+                    self.__logger.warning(
+                        f'Interruption frequency statistic is missing for {instance_type}, so instance type is ignored')
+                    return False
+
+            filtered_instances = list(filter(interruption_frequency_statistic_existing_filter, filtered_instances))
+
+            def add_interruption_frequency(ec2_instance, interruption_frequency):
+                ec2_instance['interruption_frequency'] = interruption_frequency
+                return ec2_instance
+
+            filtered_instances = list(map(lambda ec2_instance:
+                                          add_interruption_frequency(ec2_instance, interruption_frequencies[
+                                              ec2_instance['InstanceType']]),
+                                          filtered_instances))
+            filtered_instances = list(
+                filter(lambda ec2_instance: ec2_instance['interruption_frequency']['min'] <= max_interruption_frequency,
+                       filtered_instances))
+
+        self.__logger.debug(f'Instance types number after filtering: {str(len(filtered_instances))}')
 
         if is_best_price:
             if usage_class == 'on-demand':
@@ -70,7 +107,7 @@ class Ec2BestInstance:
             else:
                 raise Exception(f'The usage_class: {usage_class} does not exist')
 
-        return list(map(lambda ec2_instance: ec2_instance['InstanceType'], filtered_instances))
+        return list(map(lambda ec2_instance: {'instance_type': ec2_instance['InstanceType']}, filtered_instances))
 
     def is_instance_storage_supported_for_instance_type(self, instance_type):
         response = self.__ec2_client.describe_instance_types(
@@ -210,9 +247,18 @@ class Ec2BestInstance:
         pool.close()
         pool.join()
 
-        self.__logger.info(f"Spot price: {str(best_spot_price_instance_type_data.best_instance['price'])}")
+        interruption_frequency = best_spot_price_instance_type_data.best_instance['ec2_instance'] \
+            .get('interruption_frequency')
 
-        return best_spot_price_instance_type_data.best_instance['ec2_instance']['InstanceType']
+        entry = {
+            'instance_type': best_spot_price_instance_type_data.best_instance['ec2_instance']['InstanceType'],
+            'price': best_spot_price_instance_type_data.best_instance['price']
+        }
+
+        if interruption_frequency:
+            entry['interruption_frequency'] = interruption_frequency
+
+        return entry
 
     def __get_best_on_demand_price_instance_type(self, instance_types):
         pool = Pool(self.__describe_on_demand_price_concurrency)
@@ -227,9 +273,10 @@ class Ec2BestInstance:
 
         sorted_prices = sorted(prices, key=lambda price: price['price'])
 
-        self.__logger.info(f"On-demand price: {str(sorted_prices[0]['price'])}")
-
-        return sorted_prices[0]['instance_type']
+        return {
+            'instance_type': sorted_prices[0]['instance_type'],
+            'price': sorted_prices[0]['price']
+        }
 
     def __get_on_demand_price_instance_type(self, instance_type, prices):
         result = subprocess.check_output(["curl", "-sL", f"ec2.shop?filter={instance_type}", "-H", "accept:json"])
@@ -239,3 +286,16 @@ class Ec2BestInstance:
             'price': response_dict['Prices'][0]['Cost'],
             'instance_type': instance_type
         })
+
+    @staticmethod
+    def __get_operation_systems_by_product_descriptions(product_descriptions):
+        # Linux/UNIX'|'Linux/UNIX (Amazon VPC)'|'Windows'|'Windows (Amazon VPC)
+        return Ec2BestInstance.unique(
+            ['Linux' if product_description in ['Linux/UNIX', 'Linux/UNIX (Amazon VPC)'] else 'Windows' for
+             product_description in product_descriptions])
+
+    @staticmethod
+    def unique(list1):
+        list_set = set(list1)
+        unique_list = (list(list_set))
+        return unique_list

@@ -14,15 +14,16 @@ pip install amazon-ec2-best-instance
 
 # Options
 
-* **vcpu** Required. Describes the vCPU configurations for the instance type.
-* **memory_gb** Required. Describes the memory for the instance type in GiB.
-* **usage_class** Optional. Indicates whether the instance type is offered for spot or On-Demand.
-* **burstable** Optional. Indicates whether the instance type is a burstable performance instance type.
-* **architecture** Optional. The architectures supported by the instance type.
-* **operation_systems** Optional. The operating system that you will use on the virtual machine.
-* **is_current_generation** Optional. Use the latest generation or not.
-* **is_best_price** Optional. Indicate if you need to get an instance type with the best price.
-* **is_instance_storage_supported** Optional. Use instance types with instance store support
+* **vcpu** Required. Float. Describes the vCPU configurations for the instance type.
+* **memory_gb** Required. Float. Describes the memory for the instance type in GiB.
+* **usage_class** Optional. String. Indicates whether the instance type is offered for spot or On-Demand.
+* **burstable** Optional. Boolean. Indicates whether the instance type is a burstable performance instance type.
+* **architecture** Optional. String. The architectures supported by the instance type.
+* **operation_systems** Optional. Array(String). The operating system that you will use on the virtual machine.
+* **is_current_generation** Optional. Boolean. Use the latest generation or not.
+* **is_best_price** Optional. Boolean. Indicate if you need to get an instance type with the best price.
+* **is_instance_storage_supported** Optional. Boolean. Use instance types with instance store support
+* **max_interruption_frequency** Optional. Integer (%). Max spot instance frequency interruption in percent. Note: If you specify >=21, then the '>20%' rate is applied. It is used only if 'usage_class' == 'spot' and 'is_best_price' == True
 
 # Usage
 
@@ -33,12 +34,17 @@ from amazon_ec2_best_instance import Ec2BestInstance
 
 ec2_best_instance = Ec2BestInstance()
 
+# It returns all available instance types, including those with over-provisioning resources (CPU, memory, etc.).
 response = ec2_best_instance.get_best_instance_types({
     'vcpu': 1,
     'memory_gb': 2
 })
 
-print(response) # ['m5a.16xlarge', ... ,'r5n.metal']
+print(response)
+
+'''
+[{'instance_type': 'c5n.2xlarge'}, ... , {'instance_type': 'x2iedn.8xlarge'}]
+'''
 ```
 
 ## Advanced
@@ -81,9 +87,68 @@ response = ec2_best_instance.get_best_instance_types({
     # Optional. If this parameter is set to True, the method will return the instance type with the best price.
     'is_best_price': True,
     # Optional. If this parameter is set to True, the method will return the instance type with the instance storage.
-    'is_instance_storage_supported': True
+    'is_instance_storage_supported': True,
+    # Optional. Integer. Max spot instance frequency interruption in percent.
+    'max_interruption_frequency': 10
 })
 
 print(response)
+'''
+[{'instance_type': 'c5d.large', 'price': '0.032700', 'interruption_frequency': {'min': 0, 'max': 5, 'rate': '<5%'}}]
+'''
 
+```
+
+## Spot
+
+If you need to get a spot instance with minimal price and minimal frequency of interruption you can use 'is_best_price' and/or 'max_interruption_frequency' input parameter
+
+```
+from amazon_ec2_best_instance import Ec2BestInstance
+
+ec2_best_instance = Ec2BestInstance()
+
+response = ec2_best_instance.get_best_instance_types({
+    # Required. Float
+    'vcpu': 31.2,
+    # Required. Float
+    'memory_gb': 100.5,
+    # Optional. String. Default: 'on-demand'. Values: 'spot'|'on-demand'
+    'usage_class': 'spot',
+    # Optional. Boolean.
+    # If this parameter is set to True, the method will return the instance type with the best price.
+    'is_best_price': True,
+    # Optional. Integer. Max spot instance frequency interruption in percent.
+    # Note: If you specify >=21, then the '>20%' rate is applied
+    # It is used only if 'usage_class' == 'spot' and 'is_best_price' == True
+    'max_interruption_frequency': 10
+})
+
+print(response)
+'''
+[{'instance_type': 'm6id.8xlarge', 'price': '0.642600', 'interruption_frequency': {'min': 6, 'max': 10, 'rate': '5-10%'}}]
+'''
+```
+
+```
+from amazon_ec2_best_instance import Ec2BestInstance
+
+ec2_best_instance = Ec2BestInstance()
+
+response = ec2_best_instance.get_best_instance_types({
+    # Required. Float
+    'vcpu': 31.2,
+    # Required. Float
+    'memory_gb': 100.5,
+    # Optional. String. Default: 'on-demand'. Values: 'spot'|'on-demand'
+    'usage_class': 'spot',
+    # Optional. Boolean.
+    # If this parameter is set to True, the method will return the instance type with the best price.
+    'is_best_price': True
+})
+
+print(response)
+'''
+[{'instance_type': 'r5a.8xlarge', 'price': '0.578100'}]
+'''
 ```
