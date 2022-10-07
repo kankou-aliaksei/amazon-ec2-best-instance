@@ -1,6 +1,6 @@
 # Amazon EC2 Best Instance (amazon-ec2-best-instance)
 
-Amazon EC2 Best Instance (amazon-ec2-best-instance) allows you to choose the most optimal and cheap EC2 instance type for your use.
+Amazon EC2 Best Instance (amazon-ec2-best-instance) allows you to choose the most optimal and cheap EC2 instance type for on-demand and spot and with a less reclaimed rate for a spot instance.
 
 # Prerequisites
 * python3
@@ -19,7 +19,7 @@ pip install amazon-ec2-best-instance
 * **usage_class** Optional. String. Indicates whether the instance type is offered for spot or On-Demand.
 * **burstable** Optional. Boolean. Indicates whether the instance type is a burstable performance instance type.
 * **architecture** Optional. String. The architectures supported by the instance type.
-* **operation_systems** Optional. Array(String). The operating system that you will use on the virtual machine.
+* **product_descriptions** Optional. Array(String). The operating system that you will use on the virtual machine. Values: Linux/UNIX | Red Hat Enterprise Linux | SUSE Linux | Windows | Linux/UNIX (Amazon VPC) | Red Hat Enterprise Linux (Amazon VPC) | SUSE Linux (Amazon VPC) | Windows (Amazon VPC)
 * **is_current_generation** Optional. Boolean. Use the latest generation or not.
 * **is_best_price** Optional. Boolean. Indicate if you need to get an instance type with the best price.
 * **is_instance_storage_supported** Optional. Boolean. Use instance types with instance store support
@@ -80,8 +80,10 @@ response = ec2_best_instance.get_best_instance_types({
     'burstable': False,
     # Optional. Default: 'x86_64'. Values: 'i386'|'x86_64'|'arm64'|'x86_64_mac'
     'architecture': 'x86_64',
-    # Optional. Default: ['Linux/UNIX']. Values: 'Linux/UNIX'|'Linux/UNIX (Amazon VPC)'|'Windows'|'Windows (Amazon VPC)'
-    'operation_systems': ['Linux/UNIX'],
+    # Optional. Default: ['Linux/UNIX'].
+    # Values: Linux/UNIX | Red Hat Enterprise Linux | SUSE Linux | Windows | Linux/UNIX (Amazon VPC) | 
+        # Red Hat Enterprise Linux (Amazon VPC) | SUSE Linux (Amazon VPC) | Windows (Amazon VPC)
+    'product_descriptions': ['Linux/UNIX'],
     # Optional.
     'is_current_generation': True,
     # Optional. If this parameter is set to True, the method will return the instance type with the best price.

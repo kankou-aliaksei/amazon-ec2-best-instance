@@ -1,8 +1,8 @@
 import boto3
-import subprocess
 import json
 import logging
-from multiprocessing.pool import ThreadPool as Pool
+import os
+import operator
 from .SpotUtils import SpotUtils
 
 
@@ -10,7 +10,48 @@ class Ec2BestInstance:
     __DESCRIBE_SPOT_PRICE_HISTORY_CONCURRENCY = 10
     __DESCRIBE_ON_DEMAND_PRICE_CONCURRENCY = 10
 
+    __REGIONS = {
+        'us-east-2': 'US East (Ohio)',
+        'us-east-1': 'US East (N. Virginia)',
+        'us-west-1': 'US West (N. California)',
+        'us-west-2': 'US West (Oregon)',
+        'ap-east-1': 'Asia Pacific (Hong Kong)',
+        'ap-south-1': 'Asia Pacific (Mumbai)',
+        'ap-northeast-3': 'Asia Pacific (Osaka-Local)',
+        'ap-northeast-2': 'Asia Pacific (Seoul)',
+        'ap-southeast-1': 'Asia Pacific (Singapore)',
+        'ap-southeast-2': 'Asia Pacific (Sydney)',
+        'ap-northeast-1': 'Asia Pacific (Tokyo)',
+        'ca-central-1': 'Canada (Central)',
+        'cn-north-1': 'China (Beijing)',
+        'cn-northwest-1': 'China (Ningxia)',
+        'eu-central-1': 'EU (Frankfurt)',
+        'eu-west-1': 'EU (Ireland)',
+        'eu-west-2': 'EU (London)',
+        'eu-west-3': 'EU (Paris)',
+        'eu-north-1': 'EU (Stockholm)',
+        'me-south-1': 'Middle East (Bahrain)',
+        'sa-east-1': 'South America (Sao Paulo)'
+    }
+
+    __OS_PRODUCT_DESCRIPTION_MAP = {
+        'Linux/UNIX': 'Linux',
+        'Red Hat Enterprise Linux': 'RHEL',
+        'SUSE Linux': 'SUSE',
+        'Windows': 'Windows',
+        'Linux/UNIX (Amazon VPC)': 'Linux',
+        'Red Hat Enterprise Linux (Amazon VPC)': 'RHEL',
+        'SUSE Linux (Amazon VPC)': 'SUSE',
+        'Windows (Amazon VPC)': 'Windows'
+    }
+
     def __init__(self, options=None, logger=None):
+        if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is None:
+            from multiprocessing.pool import ThreadPool as Pool
+            self.__Pool = Pool
+        else:
+            from lambda_thread_pool import LambdaThreadPool
+            self.__Pool = LambdaThreadPool
         self.__region = 'us-east-1'
         self.__describe_spot_price_history_concurrency = self.__DESCRIBE_SPOT_PRICE_HISTORY_CONCURRENCY
         self.__describe_on_demand_price_concurrency = self.__DESCRIBE_ON_DEMAND_PRICE_CONCURRENCY
@@ -22,6 +63,7 @@ class Ec2BestInstance:
             if options.get('describe_on_demand_price_concurrency'):
                 self.__describe_on_demand_price_concurrency = options.get('describe_on_demand_price_concurrency')
         self.__ec2_client = boto3.client('ec2', region_name=self.__region)
+        self.__pricing_client = boto3.client('pricing', region_name=self.__region)
         self.__logger = logger if logger is not None else logging.getLogger()
 
     def get_best_instance_types(self, options=None):
@@ -40,11 +82,29 @@ class Ec2BestInstance:
         usage_class = options.get('usage_class', 'on-demand')
         burstable = options.get('burstable')
         architecture = options.get('architecture', 'x86_64')
-        product_descriptions = options.get('operation_systems', ['Linux/UNIX'])
+
+        valid_product_descriptions = [
+            'Linux/UNIX',
+            'Red Hat Enterprise Linux',
+            'SUSE Linux',
+            'Windows',
+            'Linux/UNIX (Amazon VPC)',
+            'Red Hat Enterprise Linux (Amazon VPC)',
+            'SUSE Linux (Amazon VPC)',
+            'Windows (Amazon VPC)'
+        ]
+        product_descriptions = options.get('product_descriptions', ['Linux/UNIX'])
+        for product_description in product_descriptions:
+            if product_description not in valid_product_descriptions:
+                raise Exception(f'The product description {product_description} is not supported')
         is_current_generation = None
         is_best_price = options.get('is_best_price', False)
         is_instance_storage_supported = options.get('is_instance_storage_supported')
         max_interruption_frequency = options.get('max_interruption_frequency')
+        operating_systems = self.__get_operating_systems_by_product_descriptions(product_descriptions)
+        if len(operating_systems) > 1:
+            raise Exception('You must specify products that are compatible with only one operating system')
+        operating_system = operating_systems[0]
 
         if options.get('is_current_generation'):
             is_current_generation = 'true' if options['is_current_generation'] == True else 'false'
@@ -66,12 +126,8 @@ class Ec2BestInstance:
 
         if usage_class == 'spot' and max_interruption_frequency is not None:
             spot_utils = SpotUtils(self.__region)
-            operation_systems = Ec2BestInstance.__get_operation_systems_by_product_descriptions(product_descriptions)
 
-            if len(operation_systems) > 1:
-                raise Exception('You must use Windows or Linux OS, not both')
-
-            interruption_frequencies = spot_utils.get_spot_interruption_frequency(operation_systems[0])
+            interruption_frequencies = spot_utils.get_spot_interruption_frequency(operating_system)
 
             def interruption_frequency_statistic_existing_filter(ec2_instance):
                 instance_type = ec2_instance['InstanceType']
@@ -101,7 +157,7 @@ class Ec2BestInstance:
         if is_best_price:
             if usage_class == 'on-demand':
                 instance_types = list(map(lambda ec2_instance: ec2_instance['InstanceType'], filtered_instances))
-                return [self.__get_best_on_demand_price_instance_type(instance_types)]
+                return [self.__get_best_on_demand_price_instance_type(instance_types, operating_system)]
             elif usage_class == 'spot':
                 return [self.__get_best_spot_price_instance_type(filtered_instances, product_descriptions)]
             else:
@@ -207,7 +263,7 @@ class Ec2BestInstance:
 
         return filtered_instances
 
-    def __ec2_instance_price_loop(self, ec2_instance, product_descriptions, best_spot_price_instance_type_data):
+    def __ec2_instance_price_loop(self, ec2_instance, product_descriptions):
         instance_type = ec2_instance['InstanceType']
 
         response = self.__ec2_client.describe_spot_price_history(
@@ -220,39 +276,38 @@ class Ec2BestInstance:
             ]
         )
 
-        spot_price = response['SpotPriceHistory'][0]['SpotPrice']
+        timestamp = response['SpotPriceHistory'][0]['Timestamp']
+        candidates = [spot_price['SpotPrice'] for spot_price in response['SpotPriceHistory'] if
+                      str(spot_price['Timestamp']) == str(timestamp)]
+        spot_price = min(candidates)
 
-        if spot_price < best_spot_price_instance_type_data.best_instance['price']:
-            best_spot_price_instance_type_data.best_instance = {
-                'price': spot_price,
-                'ec2_instance': ec2_instance,
-                'spot_price_history': response['SpotPriceHistory'][0]
-            }
+        return {
+            'price': spot_price,
+            'ec2_instance': ec2_instance
+        }
 
     def __get_best_spot_price_instance_type(self, filtered_instances, product_descriptions):
-        class BestSpotPriceInstanceTypeData:
-            def __init__(self):
-                self.best_instance = {
-                    'price': '10000.0'
-                }
+        pool = self.__Pool(self.__describe_spot_price_history_concurrency)
 
-        pool = Pool(self.__describe_spot_price_history_concurrency)
-
-        best_spot_price_instance_type_data = BestSpotPriceInstanceTypeData()
+        results = []
 
         for ec2_instance in filtered_instances:
-            pool.apply_async(self.__ec2_instance_price_loop,
-                             (ec2_instance, product_descriptions, best_spot_price_instance_type_data))
+            result = pool.apply_async(self.__ec2_instance_price_loop, (ec2_instance, product_descriptions))
+            results.append(result)
 
         pool.close()
         pool.join()
 
-        interruption_frequency = best_spot_price_instance_type_data.best_instance['ec2_instance'] \
-            .get('interruption_frequency')
+        ec2_instances = [result.get() for result in results]
+        ec2_instances.sort(key=operator.itemgetter('price'))
+
+        best_instance = ec2_instances[0]
+
+        interruption_frequency = best_instance['ec2_instance'].get('interruption_frequency')
 
         entry = {
-            'instance_type': best_spot_price_instance_type_data.best_instance['ec2_instance']['InstanceType'],
-            'price': best_spot_price_instance_type_data.best_instance['price']
+            'instance_type': best_instance['ec2_instance']['InstanceType'],
+            'price': best_instance['price']
         }
 
         if interruption_frequency:
@@ -260,39 +315,72 @@ class Ec2BestInstance:
 
         return entry
 
-    def __get_best_on_demand_price_instance_type(self, instance_types):
-        pool = Pool(self.__describe_on_demand_price_concurrency)
-
-        prices = []
+    def __get_best_on_demand_price_instance_type(self, instance_types, operating_system):
+        ec2_prices = self.__get_ec2_price(operating_system)
+        ec2_instances = []
 
         for instance_type in instance_types:
-            pool.apply_async(self.__get_on_demand_price_instance_type, (instance_type, prices))
+            price = ec2_prices.get(instance_type)
+            if price is not None:
+                ec2_instances.append({
+                    'price': ec2_prices[instance_type]['instance_price'],
+                    'instance_type': instance_type
+                })
+            else:
+                self.__logger.warning(f'Price for the {instance_type} instance type not found')
 
-        pool.close()
-        pool.join()
+        ec2_instances.sort(key=operator.itemgetter('price'))
+        best_instance = ec2_instances[0]
 
-        sorted_prices = sorted(prices, key=lambda price: price['price'])
+        return best_instance
 
-        return {
-            'instance_type': sorted_prices[0]['instance_type'],
-            'price': sorted_prices[0]['price']
-        }
+    def __get_ec2_price(self, operating_system):
+        next_token = ''
+        records = {}
+        while next_token is not None:
+            response = self.__pricing_client.get_products(
+                ServiceCode='AmazonEC2',
+                Filters=[
+                    {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+                    # {'Type': 'TERM_MATCH', 'Field': 'storage', 'Value': 'EBS only'},
+                    {'Type': 'TERM_MATCH', 'Field': 'productFamily', 'Value': 'Compute Instance'},
+                    {'Type': 'TERM_MATCH', 'Field': 'termType', 'Value': 'OnDemand'},
+                    {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': self.__REGIONS[self.__region]},
+                    {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': 'No License required'},
+                    {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                    {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
+                    {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': operating_system}
+                ],
+                NextToken=next_token
+            )
+            try:
+                next_token = response['NextToken']
+            except KeyError:
+                next_token = None
+            for price in response['PriceList']:
+                details = json.loads(price)
+                pricedimensions = next(iter(details['terms']['OnDemand'].values()))['priceDimensions']
+                pricing_details = next(iter(pricedimensions.values()))
+                instance_price = float(pricing_details['pricePerUnit']['USD'])
+                instance_type = details['product']['attributes']['instanceType']
+                if instance_price <= 0:
+                    continue
+                vcpu = details['product']['attributes']['vcpu']
+                memory = details['product']['attributes']['memory'].split(" ")[0]
+                os = json.loads(price)['product']['attributes']['operatingSystem']
+                records[instance_type] = {
+                    'instance_type': instance_type,
+                    'vcpu': vcpu,
+                    'memory': memory,
+                    'os': os,
+                    'instance_price': instance_price
+                }
+        return records
 
-    def __get_on_demand_price_instance_type(self, instance_type, prices):
-        result = subprocess.check_output(["curl", "-sL", f"ec2.shop?filter={instance_type}", "-H", "accept:json"])
-        response_string = str(result).replace("b'", "").replace("\\n'", "")
-        response_dict = json.loads(response_string)
-        prices.append({
-            'price': response_dict['Prices'][0]['Cost'],
-            'instance_type': instance_type
-        })
-
-    @staticmethod
-    def __get_operation_systems_by_product_descriptions(product_descriptions):
-        # Linux/UNIX'|'Linux/UNIX (Amazon VPC)'|'Windows'|'Windows (Amazon VPC)
-        return Ec2BestInstance.unique(
-            ['Linux' if product_description in ['Linux/UNIX', 'Linux/UNIX (Amazon VPC)'] else 'Windows' for
-             product_description in product_descriptions])
+    def __get_operating_systems_by_product_descriptions(self, product_descriptions):
+        operating_systems = [self.__OS_PRODUCT_DESCRIPTION_MAP[product_description] for product_description in
+                             product_descriptions]
+        return Ec2BestInstance.unique(operating_systems)
 
     @staticmethod
     def unique(list1):
