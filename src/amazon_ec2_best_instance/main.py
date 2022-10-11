@@ -157,9 +157,9 @@ class Ec2BestInstance:
         if is_best_price:
             if usage_class == 'on-demand':
                 instance_types = list(map(lambda ec2_instance: ec2_instance['InstanceType'], filtered_instances))
-                return [self.__get_best_on_demand_price_instance_type(instance_types, operating_system)]
+                return [self.__sort_on_demand_instances_by_price(instance_types, operating_system)]
             elif usage_class == 'spot':
-                return [self.__get_best_spot_price_instance_type(filtered_instances, product_descriptions)]
+                return [self.__sort_spot_instances_by_price(filtered_instances, product_descriptions)]
             else:
                 raise Exception(f'The usage_class: {usage_class} does not exist')
 
@@ -286,7 +286,7 @@ class Ec2BestInstance:
             'ec2_instance': ec2_instance
         }
 
-    def __get_best_spot_price_instance_type(self, filtered_instances, product_descriptions):
+    def __sort_spot_instances_by_price(self, filtered_instances, product_descriptions):
         pool = self.__Pool(self.__describe_spot_price_history_concurrency)
 
         results = []
@@ -301,21 +301,24 @@ class Ec2BestInstance:
         ec2_instances = [result.get() for result in results]
         ec2_instances.sort(key=operator.itemgetter('price'))
 
-        best_instance = ec2_instances[0]
+        enriched_instances = []
 
-        interruption_frequency = best_instance['ec2_instance'].get('interruption_frequency')
+        for ec2_instance in ec2_instances:
+            interruption_frequency = ec2_instance['ec2_instance'].get('interruption_frequency')
 
-        entry = {
-            'instance_type': best_instance['ec2_instance']['InstanceType'],
-            'price': best_instance['price']
-        }
+            entry = {
+                'instance_type': ec2_instance['ec2_instance']['InstanceType'],
+                'price': ec2_instance['price']
+            }
 
-        if interruption_frequency:
-            entry['interruption_frequency'] = interruption_frequency
+            if interruption_frequency:
+                entry['interruption_frequency'] = interruption_frequency
 
-        return entry
+            enriched_instances.append(entry)
 
-    def __get_best_on_demand_price_instance_type(self, instance_types, operating_system):
+        return enriched_instances
+
+    def __sort_on_demand_instances_by_price(self, instance_types, operating_system):
         ec2_prices = self.__get_ec2_price(operating_system)
         ec2_instances = []
 
@@ -330,9 +333,8 @@ class Ec2BestInstance:
                 self.__logger.warning(f'Price for the {instance_type} instance type not found')
 
         ec2_instances.sort(key=operator.itemgetter('price'))
-        best_instance = ec2_instances[0]
 
-        return best_instance
+        return ec2_instances
 
     def __get_ec2_price(self, operating_system):
         next_token = ''

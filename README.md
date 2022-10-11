@@ -21,7 +21,7 @@ pip install amazon-ec2-best-instance
 * **architecture** Optional. String. The architectures supported by the instance type.
 * **product_descriptions** Optional. Array(String). The operating system that you will use on the virtual machine. Values: Linux/UNIX | Red Hat Enterprise Linux | SUSE Linux | Windows | Linux/UNIX (Amazon VPC) | Red Hat Enterprise Linux (Amazon VPC) | SUSE Linux (Amazon VPC) | Windows (Amazon VPC)
 * **is_current_generation** Optional. Boolean. Use the latest generation or not.
-* **is_best_price** Optional. Boolean. Indicate if you need to get an instance type with the best price.
+* **is_best_price** Optional. Boolean. Indicate if you need to get an instance type with the best price. If this flag is specified, the "get_best_instance_types" method returns a list of instance types sorted by price in ascending order.
 * **is_instance_storage_supported** Optional. Boolean. Use instance types with instance store support
 * **max_interruption_frequency** Optional. Integer (%). Max spot instance frequency interruption in percent. Note: If you specify >=21, then the '>20%' rate is applied. It is used only if 'usage_class' == 'spot' and 'is_best_price' == True
 
@@ -96,7 +96,7 @@ response = ec2_best_instance.get_best_instance_types({
 
 print(response)
 '''
-[{'instance_type': 'c5d.large', 'price': '0.032700', 'interruption_frequency': {'min': 0, 'max': 5, 'rate': '<5%'}}]
+[{'instance_type': 'c5d.large', 'price': '0.032700', 'interruption_frequency': {'min': 0, 'max': 5, 'rate': '<5%'}}, ...]
 '''
 
 ```
@@ -128,7 +128,7 @@ response = ec2_best_instance.get_best_instance_types({
 
 print(response)
 '''
-[{'instance_type': 'm6id.8xlarge', 'price': '0.642600', 'interruption_frequency': {'min': 6, 'max': 10, 'rate': '5-10%'}}]
+[{'instance_type': 'm6id.8xlarge', 'price': '0.642600', 'interruption_frequency': {'min': 6, 'max': 10, 'rate': '5-10%'}}, ...]
 '''
 ```
 
@@ -151,6 +151,6 @@ response = ec2_best_instance.get_best_instance_types({
 
 print(response)
 '''
-[{'instance_type': 'r5a.8xlarge', 'price': '0.578100'}]
+[{'instance_type': 'r5a.8xlarge', 'price': '0.578100'}, ...]
 '''
 ```
