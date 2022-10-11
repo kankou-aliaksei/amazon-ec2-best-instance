@@ -157,9 +157,9 @@ class Ec2BestInstance:
         if is_best_price:
             if usage_class == 'on-demand':
                 instance_types = list(map(lambda ec2_instance: ec2_instance['InstanceType'], filtered_instances))
-                return [self.__sort_on_demand_instances_by_price(instance_types, operating_system)]
+                return self.__sort_on_demand_instances_by_price(instance_types, operating_system)
             elif usage_class == 'spot':
-                return [self.__sort_spot_instances_by_price(filtered_instances, product_descriptions)]
+                return self.__sort_spot_instances_by_price(filtered_instances, product_descriptions)
             else:
                 raise Exception(f'The usage_class: {usage_class} does not exist')
 
