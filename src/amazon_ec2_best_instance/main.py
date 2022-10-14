@@ -62,8 +62,14 @@ class Ec2BestInstance:
                 self.__describe_spot_price_history_concurrency = options.get('describe_spot_price_history_concurrency')
             if options.get('describe_on_demand_price_concurrency'):
                 self.__describe_on_demand_price_concurrency = options.get('describe_on_demand_price_concurrency')
-        self.__ec2_client = boto3.client('ec2', region_name=self.__region)
-        self.__pricing_client = boto3.client('pricing', region_name=self.__region)
+        if options is not None and options.get('clients') is not None and options['clients'].get('ec2') is not None:
+            self.__ec2_client = options['clients']['ec2']
+        else:
+            self.__ec2_client = boto3.client('ec2', region_name=self.__region)
+        if options is not None and options.get('clients') is not None and options['clients'].get('pricing') is not None:
+            self.__pricing_client = options['clients']['pricing']
+        else:
+            self.__pricing_client = boto3.client('pricing', region_name=self.__region)
         self.__logger = logger if logger is not None else logging.getLogger()
 
     def get_best_instance_types(self, options=None):

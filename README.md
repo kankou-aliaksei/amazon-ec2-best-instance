@@ -50,8 +50,27 @@ print(response)
 ## Advanced
 
 ```
+import boto3
+from botocore.config import Config
 import logging
 from amazon_ec2_best_instance import Ec2BestInstance
+
+ec2_client_config = Config(
+    retries={
+        'max_attempts': 20,
+        'mode': 'adaptive'
+    }
+)
+
+pricing_client_config = Config(
+    retries={
+        'max_attempts': 10,
+        'mode': 'standard'
+    }
+)
+
+ec2_client = boto3.Session().client('ec2', config=ec2_client_config)
+pricing_client = boto3.Session().client('pricing', config=pricing_client_config)
 
 # Optional.
 options = {
@@ -60,7 +79,11 @@ options = {
     # Optional. Default: 10
     'describe_spot_price_history_concurrency': 20,
     # Optional. Default: 10
-    'describe_on_demand_price_concurrency': 20
+    'describe_on_demand_price_concurrency': 20,
+    'clients': {
+        'ec2': ec2_client,
+        'pricing': pricing_client
+    }
 }
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s: %(levelname)s: %(message)s')
