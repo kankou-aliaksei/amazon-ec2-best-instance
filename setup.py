@@ -5,6 +5,6 @@ setuptools.setup(
     python_requires=">3.7.0",
     install_requires=[
         'boto3 >=1.23.10',
-        'lambda-thread-pool'
+        'lambda-thread-pool >=0.0.2'
     ]
 )
