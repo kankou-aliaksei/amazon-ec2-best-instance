@@ -118,6 +118,7 @@ response = ec2_best_instance.get_best_instance_types({
     'is_instance_storage_supported': True,
     # Optional. Integer. Max spot instance frequency interruption in percent.
     'max_interruption_frequency': 10,
+    # Optional. List<String>. The availability zones.
     'availability_zones': ['us-east-1a', 'us-east-1b']
 })
 
