@@ -19,11 +19,12 @@ pip install amazon-ec2-best-instance
 * **usage_class** Optional. String. Indicates whether the instance type is offered for spot or On-Demand.
 * **burstable** Optional. Boolean. Indicates whether the instance type is a burstable performance instance type.
 * **architecture** Optional. String. The architectures supported by the instance type.
-* **product_descriptions** Optional. Array(String). The operating system that you will use on the virtual machine. Values: Linux/UNIX | Red Hat Enterprise Linux | SUSE Linux | Windows | Linux/UNIX (Amazon VPC) | Red Hat Enterprise Linux (Amazon VPC) | SUSE Linux (Amazon VPC) | Windows (Amazon VPC)
+* **product_descriptions** Optional. List<String>. The operating system that you will use on the virtual machine. Values: Linux/UNIX | Red Hat Enterprise Linux | SUSE Linux | Windows | Linux/UNIX (Amazon VPC) | Red Hat Enterprise Linux (Amazon VPC) | SUSE Linux (Amazon VPC) | Windows (Amazon VPC)
 * **is_current_generation** Optional. Boolean. Use the latest generation or not.
 * **is_best_price** Optional. Boolean. Indicate if you need to get an instance type with the best price. If this flag is specified, the "get_best_instance_types" method returns a list of instance types sorted by price in ascending order.
 * **is_instance_storage_supported** Optional. Boolean. Use instance types with instance store support
 * **max_interruption_frequency** Optional. Integer (%). Max spot instance frequency interruption in percent. Note: If you specify >=21, then the '>20%' rate is applied. It is used only if 'usage_class' == 'spot' and 'is_best_price' == True
+* **availability_zones** Optional. List<String>. Availability zones
 
 # Usage
 
@@ -116,7 +117,8 @@ response = ec2_best_instance.get_best_instance_types({
     # Optional. If this parameter is set to True, the method will return the instance type with the instance storage.
     'is_instance_storage_supported': True,
     # Optional. Integer. Max spot instance frequency interruption in percent.
-    'max_interruption_frequency': 10
+    'max_interruption_frequency': 10,
+    'availability_zones': ['us-east-1a', 'us-east-1b']
 })
 
 print(response)
