@@ -83,7 +83,9 @@ options = {
     'clients': {
         'ec2': ec2_client,
         'pricing': pricing_client
-    }
+    },
+    # Optional. Integer. Default: 120. It limits the lifetime of cache data.
+    'cache_ttl_in_minutes': 60
 }
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s: %(levelname)s: %(message)s')

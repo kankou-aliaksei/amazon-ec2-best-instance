@@ -3,12 +3,16 @@ import json
 import logging
 import os
 import operator
+import hashlib
+from datetime import datetime
 from .SpotUtils import SpotUtils
 
 
 class Ec2BestInstance:
     __DESCRIBE_SPOT_PRICE_HISTORY_CONCURRENCY = 10
     __DESCRIBE_ON_DEMAND_PRICE_CONCURRENCY = 10
+    __CACHE_TTL_IN_MINUTES = 120
+    __cache = {}
 
     __REGIONS = {
         'us-east-2': 'US East (Ohio)',
@@ -45,7 +49,9 @@ class Ec2BestInstance:
         'Windows (Amazon VPC)': 'Windows'
     }
 
-    def __init__(self, options=None, logger=None):
+    def __init__(self, options={}, logger=None):
+        self.__CACHE_TTL_IN_MINUTES = options.get('cache_ttl_in_minutes', self.__CACHE_TTL_IN_MINUTES)
+
         if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is None:
             from multiprocessing.pool import ThreadPool as Pool
             self.__Pool = Pool
@@ -73,6 +79,21 @@ class Ec2BestInstance:
         self.__logger = logger if logger is not None else logging.getLogger()
 
     def get_best_instance_types(self, options=None):
+        hash_digest = self.get_hash(options)
+        if self.__cache.get(hash_digest) is not None:
+            cache_datetime = self.__cache[hash_digest]['datetime']
+            now = datetime.now()
+            delta = now - cache_datetime
+            delta_in_minutes = delta.total_seconds() / 60
+            if delta_in_minutes <= self.__CACHE_TTL_IN_MINUTES:
+                self.__logger.info(f'Cache hit for {hash_digest}')
+                return self.__cache[hash_digest]['result']
+            else:
+                self.__logger.info(f'Cache expired for {hash_digest}')
+                del self.__cache[hash_digest]['result']
+        else:
+            self.__logger.info(f'Cache miss for {hash_digest}')
+
         import logging
         logging.getLogger("urllib3").setLevel(logging.ERROR)
         if options is None:
@@ -88,6 +109,7 @@ class Ec2BestInstance:
         usage_class = options.get('usage_class', 'on-demand')
         burstable = options.get('burstable')
         architecture = options.get('architecture', 'x86_64')
+        availability_zones = options.get('availability_zones')
 
         valid_product_descriptions = [
             'Linux/UNIX',
@@ -163,13 +185,21 @@ class Ec2BestInstance:
         if is_best_price:
             if usage_class == 'on-demand':
                 instance_types = list(map(lambda ec2_instance: ec2_instance['InstanceType'], filtered_instances))
-                return self.__sort_on_demand_instances_by_price(instance_types, operating_system)
+                result = self.__sort_on_demand_instances_by_price(instance_types, operating_system)
             elif usage_class == 'spot':
-                return self.__sort_spot_instances_by_price(filtered_instances, product_descriptions)
+                result = self.__sort_spot_instances_by_price(filtered_instances, product_descriptions,
+                                                             availability_zones)
             else:
                 raise Exception(f'The usage_class: {usage_class} does not exist')
+        else:
+            result = list(map(lambda ec2_instance: {'instance_type': ec2_instance['InstanceType']}, filtered_instances))
 
-        return list(map(lambda ec2_instance: {'instance_type': ec2_instance['InstanceType']}, filtered_instances))
+        hash_digest = self.get_hash(options)
+        self.__cache[hash_digest] = {
+            'result': result,
+            'datetime': datetime.now()
+        }
+        return result
 
     def is_instance_storage_supported_for_instance_type(self, instance_type):
         response = self.__ec2_client.describe_instance_types(
@@ -269,21 +299,34 @@ class Ec2BestInstance:
 
         return filtered_instances
 
-    def __ec2_instance_price_loop(self, ec2_instance, product_descriptions):
+    def __ec2_instance_price_loop(self, ec2_instance, product_descriptions, availability_zones):
         instance_type = ec2_instance['InstanceType']
+
+        filters = [
+            {
+                'Name': 'product-description',
+                'Values': product_descriptions
+            }
+        ]
+
+        if availability_zones:
+            filters.append({
+                'Name': 'availability-zone',
+                'Values': availability_zones
+            })
 
         response = self.__ec2_client.describe_spot_price_history(
             InstanceTypes=[instance_type],
-            Filters=[
-                {
-                    'Name': 'product-description',
-                    'Values': product_descriptions
-                }
-            ]
+            Filters=filters
         )
 
-        timestamp = response['SpotPriceHistory'][0]['Timestamp']
-        candidates = [spot_price['SpotPrice'] for spot_price in response['SpotPriceHistory'] if
+        if len(response['SpotPriceHistory']) == 0:
+            return None
+
+        history_events = response['SpotPriceHistory']
+
+        timestamp = history_events[0]['Timestamp']
+        candidates = [spot_price['SpotPrice'] for spot_price in history_events if
                       str(spot_price['Timestamp']) == str(timestamp)]
         spot_price = min(candidates)
 
@@ -292,19 +335,21 @@ class Ec2BestInstance:
             'ec2_instance': ec2_instance
         }
 
-    def __sort_spot_instances_by_price(self, filtered_instances, product_descriptions):
+    def __sort_spot_instances_by_price(self, filtered_instances, product_descriptions, availability_zones):
         pool = self.__Pool(self.__describe_spot_price_history_concurrency)
 
         results = []
 
         for ec2_instance in filtered_instances:
-            result = pool.apply_async(self.__ec2_instance_price_loop, (ec2_instance, product_descriptions))
+            result = pool.apply_async(self.__ec2_instance_price_loop,
+                                      (ec2_instance, product_descriptions, availability_zones))
             results.append(result)
 
         pool.close()
         pool.join()
 
         ec2_instances = [result.get() for result in results]
+        ec2_instances = [ec2_instance for ec2_instance in ec2_instances if ec2_instance is not None]
         ec2_instances.sort(key=operator.itemgetter('price'))
 
         enriched_instances = []
@@ -395,3 +440,9 @@ class Ec2BestInstance:
         list_set = set(list1)
         unique_list = (list(list_set))
         return unique_list
+
+    @staticmethod
+    def get_hash(dictionary):
+        dict_string = json.dumps(dictionary)
+        hash_object = hashlib.md5(dict_string.encode())
+        return hash_object.hexdigest()
