@@ -134,7 +134,7 @@ class Ec2BestInstance:
             raise Exception('You must specify products that are compatible with only one operating system')
         operating_system = operating_systems[0]
 
-        if options.get('is_current_generation'):
+        if options.get('is_current_generation') is not None:
             is_current_generation = 'true' if options['is_current_generation'] == True else 'false'
 
         instances = self.__describe_instance_types({
