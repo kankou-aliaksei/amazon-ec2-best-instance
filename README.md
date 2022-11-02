@@ -25,6 +25,7 @@ pip install amazon-ec2-best-instance
 * **is_instance_storage_supported** Optional. Boolean. Use instance types with instance store support
 * **max_interruption_frequency** Optional. Integer (%). Max spot instance frequency interruption in percent. Note: If you specify >=21, then the '>20%' rate is applied. It is used only if 'usage_class' == 'spot' and 'is_best_price' == True
 * **availability_zones** Optional. List<String>. Availability zones
+* **final_spot_price_determination_strategy** Optional. String. Default: "min". Valid values: "min"|"max"|"average"
 
 # Usage
 

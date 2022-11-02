@@ -61,24 +61,23 @@ class Ec2BestInstance:
         self.__region = 'us-east-1'
         self.__describe_spot_price_history_concurrency = self.__DESCRIBE_SPOT_PRICE_HISTORY_CONCURRENCY
         self.__describe_on_demand_price_concurrency = self.__DESCRIBE_ON_DEMAND_PRICE_CONCURRENCY
-        if options is not None:
-            if options.get('region'):
-                self.__region = options['region']
-            if options.get('describe_spot_price_history_concurrency'):
-                self.__describe_spot_price_history_concurrency = options.get('describe_spot_price_history_concurrency')
-            if options.get('describe_on_demand_price_concurrency'):
-                self.__describe_on_demand_price_concurrency = options.get('describe_on_demand_price_concurrency')
-        if options is not None and options.get('clients') is not None and options['clients'].get('ec2') is not None:
+        if options.get('region'):
+            self.__region = options['region']
+        if options.get('describe_spot_price_history_concurrency'):
+            self.__describe_spot_price_history_concurrency = options.get('describe_spot_price_history_concurrency')
+        if options.get('describe_on_demand_price_concurrency'):
+            self.__describe_on_demand_price_concurrency = options.get('describe_on_demand_price_concurrency')
+        if options.get('clients') is not None and options['clients'].get('ec2') is not None:
             self.__ec2_client = options['clients']['ec2']
         else:
             self.__ec2_client = boto3.session.Session().client('ec2', region_name=self.__region)
-        if options is not None and options.get('clients') is not None and options['clients'].get('pricing') is not None:
+        if options.get('clients') is not None and options['clients'].get('pricing') is not None:
             self.__pricing_client = options['clients']['pricing']
         else:
             self.__pricing_client = boto3.session.Session().client('pricing', region_name=self.__region)
         self.__logger = logger if logger is not None else logging.getLogger()
 
-    def get_best_instance_types(self, options=None):
+    def get_best_instance_types(self, options={}):
         hash_digest = self.get_hash(options)
         if self.__cache.get(hash_digest) is not None:
             cache_datetime = self.__cache[hash_digest]['datetime']
@@ -96,8 +95,6 @@ class Ec2BestInstance:
 
         import logging
         logging.getLogger("urllib3").setLevel(logging.ERROR)
-        if options is None:
-            raise Exception('Options are missing')
         if options.get('vcpu') is None:
             raise Exception('A vcpu option is missing')
         if options.get('memory_gb') is None:
@@ -110,6 +107,7 @@ class Ec2BestInstance:
         burstable = options.get('burstable')
         architecture = options.get('architecture', 'x86_64')
         availability_zones = options.get('availability_zones')
+        final_spot_price_determination_strategy = options.get('final_spot_price_determination_strategy', 'min')
 
         valid_product_descriptions = [
             'Linux/UNIX',
@@ -188,7 +186,8 @@ class Ec2BestInstance:
                 result = self.__sort_on_demand_instances_by_price(instance_types, operating_system)
             elif usage_class == 'spot':
                 result = self.__sort_spot_instances_by_price(filtered_instances, product_descriptions,
-                                                             availability_zones)
+                                                             availability_zones,
+                                                             final_spot_price_determination_strategy)
             else:
                 raise Exception(f'The usage_class: {usage_class} does not exist')
         else:
@@ -299,7 +298,8 @@ class Ec2BestInstance:
 
         return filtered_instances
 
-    def __ec2_instance_price_loop(self, ec2_instance, product_descriptions, availability_zones):
+    def __ec2_instance_price_loop(self, ec2_instance, product_descriptions, availability_zones,
+                                  final_spot_price_determination_strategy):
         instance_type = ec2_instance['InstanceType']
 
         filters = [
@@ -325,24 +325,44 @@ class Ec2BestInstance:
 
         history_events = response['SpotPriceHistory']
 
-        timestamp = history_events[0]['Timestamp']
-        candidates = [spot_price['SpotPrice'] for spot_price in history_events if
-                      str(spot_price['Timestamp']) == str(timestamp)]
-        spot_price = min(candidates)
+        az_price = {}
+
+        for i, availability_zone in enumerate(availability_zones):
+            for history_event in history_events:
+                az = history_event['AvailabilityZone']
+                if availability_zone == az:
+                    az_price[availability_zone] = history_event['SpotPrice']
+                    break
+
+        strategy = final_spot_price_determination_strategy
+
+        values = [float(v) for v in az_price.values()]
+
+        if strategy == 'average':
+            spot_price = sum(values) / len(values)
+        elif strategy == 'max':
+            spot_price = max(values)
+        elif strategy == 'min':
+            spot_price = min(values)
+        else:
+            raise Exception(f'The {strategy} strategy is wrong')
 
         return {
             'price': spot_price,
-            'ec2_instance': ec2_instance
+            'ec2_instance': ec2_instance,
+            'az_price': az_price
         }
 
-    def __sort_spot_instances_by_price(self, filtered_instances, product_descriptions, availability_zones):
+    def __sort_spot_instances_by_price(self, filtered_instances, product_descriptions, availability_zones,
+                                       final_spot_price_determination_strategy):
         pool = self.__Pool(self.__describe_spot_price_history_concurrency)
 
         results = []
 
         for ec2_instance in filtered_instances:
             result = pool.apply_async(self.__ec2_instance_price_loop,
-                                      (ec2_instance, product_descriptions, availability_zones))
+                                      (ec2_instance, product_descriptions, availability_zones,
+                                       final_spot_price_determination_strategy))
             results.append(result)
 
         pool.close()
@@ -359,7 +379,8 @@ class Ec2BestInstance:
 
             entry = {
                 'instance_type': ec2_instance['ec2_instance']['InstanceType'],
-                'price': ec2_instance['price']
+                'price': ec2_instance['price'],
+                'az_price': ec2_instance['az_price']
             }
 
             if interruption_frequency:
