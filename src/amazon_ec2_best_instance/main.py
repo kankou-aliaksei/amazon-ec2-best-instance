@@ -74,7 +74,7 @@ class Ec2BestInstance:
         if options.get('clients') is not None and options['clients'].get('pricing') is not None:
             self.__pricing_client = options['clients']['pricing']
         else:
-            self.__pricing_client = boto3.session.Session().client('pricing', region_name=self.__region)
+            self.__pricing_client = boto3.session.Session().client('pricing', region_name='us-east-1')
         self.__logger = logger if logger is not None else logging.getLogger()
 
     def get_best_instance_types(self, options={}):
